@@ -535,49 +535,14 @@ KNOWN_CORPORATE_PHONES = {
 }
 
 def derive_phone(company: str, location: str, country: str) -> str:
-    """Generate realistic, standardized corporate switchboard phone number based on company & region."""
+    """Return a corporate switchboard only if it is in the known directory. Never invents numbers."""
     if not company:
         return ""
     comp_clean = company.lower()
     for k, v in KNOWN_CORPORATE_PHONES.items():
         if k in comp_clean:
             return v
-
-    loc_clean = (str(location) + " " + str(country)).lower()
-    seed = abs(hash(company.strip().lower()))
-
-    # Regional Indian switchboards
-    if "mumbai" in loc_clean:
-        return f"+91 (022) 6820 {seed % 9000 + 1000}"
-    elif "pune" in loc_clean:
-        return f"+91 (020) 6680 {seed % 9000 + 1000}"
-    elif any(x in loc_clean for x in ["delhi", "gurugram", "gurgaon", "noida", "ncr"]):
-        return f"+91 (0124) 470 {seed % 9000 + 1000}"
-    elif any(x in loc_clean for x in ["bangalore", "bengaluru", "karnataka"]):
-        return f"+91 (080) 4680 {seed % 9000 + 1000}"
-    elif any(x in loc_clean for x in ["hyderabad", "telangana"]):
-        return f"+91 (040) 6710 {seed % 9000 + 1000}"
-    elif "india" in loc_clean or "in" == str(country).strip().lower():
-        return f"+91 (022) 6100 {seed % 9000 + 1000}"
-    # US switchboards
-    elif "united states" in loc_clean or "us" == str(country).strip().lower() or "usa" in loc_clean:
-        return f"+1 (800) {seed % 800 + 100}-{seed % 9000 + 1000}"
-    # UK switchboards
-    elif "united kingdom" in loc_clean or "uk" == str(country).strip().lower() or "london" in loc_clean:
-        return f"+44 20 7946 {seed % 900 + 100}"
-    # Western Europe
-    elif "germany" in loc_clean or "de" == str(country).strip().lower():
-        return f"+49 30 2000 {seed % 9000 + 1000}"
-    elif "france" in loc_clean or "fr" == str(country).strip().lower():
-        return f"+33 1 40 00 {seed % 90 + 10} {seed % 90 + 10}"
-    elif "australia" in loc_clean or "au" == str(country).strip().lower():
-        return f"+61 2 9000 {seed % 9000 + 1000}"
-    elif "singapore" in loc_clean or "sg" == str(country).strip().lower():
-        return f"+65 6700 {seed % 9000 + 1000}"
-    elif "uae" in loc_clean or "dubai" in loc_clean:
-        return f"+971 4 390 {seed % 9000 + 1000}"
-    else:
-        return f"+1 (800) {seed % 800 + 100}-{seed % 9000 + 1000}"
+    return ""
 
 # -------------------------------------------------------------
 # Clean URL & Domain Logic
@@ -695,7 +660,7 @@ def extract_profile_with_session(session: requests.Session, url: str) -> dict:
         "Job Title": "",
         "Current Company": "",
         "Company Website": "",
-        "Professional Email": "",
+        "Predicted Email": "",
         "Phone Number": "",
         "Country": "",
         "Location": "",
@@ -789,72 +754,81 @@ def extract_profile_with_session(session: requests.Session, url: str) -> dict:
             domain = derive_domain(data["Current Company"])
             if domain:
                 data["Company Website"] = f"https://www.{domain}"
-                data["Professional Email"] = generate_email(data["Full Name"], domain)
+                data["Predicted Email"] = generate_email(data["Full Name"], domain)
 
             # Phone Number Enrichment
             data["Phone Number"] = derive_phone(data["Current Company"], data["Location"], data["Country"])
 
-            data["Status"] = "Verified from LinkedIn Profile" if data["Full Name"] else "Public Profile Detected"
+            data["Status"] = "LinkedIn profile read (email is a pattern guess, unverified)" if data["Full Name"] else "Public Profile Detected"
         else:
-            data["Status"] = f"HTTP {resp.status_code}"
+            data["Status"] = "Blocked by LinkedIn (HTTP 999)" if resp.status_code == 999 else f"HTTP {resp.status_code}"
     except Exception as e:
         data["Status"] = f"Connection error: {str(e)[:30]}"
 
     return data
 
 def enrich_with_gemini(api_key: str, profile_url: str, base_data: dict, requested_fields: list) -> dict:
-    """Enhance contact accuracy using Google Gemini AI."""
+    """Ask Gemini to fill EMPTY fields only. Output is a suggestion, not verified data."""
     try:
         from google import genai
         client = genai.Client(api_key=api_key)
-        
+
         prompt = f"""
-You are an expert B2B lead intelligence assistant.
-Review the following lead data:
+You are a B2B lead research assistant. You cannot browse the web.
+Known lead data:
 - URL: {profile_url}
 - Name: {base_data.get('Full Name')}
 - Job Title: {base_data.get('Job Title')}
 - Company: {base_data.get('Current Company')}
 - Location/Country: {base_data.get('Location')}, {base_data.get('Country')}
 
-Task:
-1. Provide verified details for empty fields.
-2. Official corporate domain website.
-3. Most accurate business email pattern.
-4. Corporate switchboard phone number format for that company and city.
-5. Standard country name.
+Fill in ONLY what you are confident about:
+1. Official company website domain.
+2. Most likely business email in the company's usual pattern.
+3. Standard country name.
+Use an empty string "" for anything you are not sure about. Never invent phone numbers.
 
-Return ONLY a valid JSON:
+Return ONLY valid JSON:
 {{
-    "Full Name": "verified name",
-    "Current Company": "verified company",
-    "Job Title": "verified title",
-    "Company Website": "https://company.com",
-    "Professional Email": "email@company.com",
-    "Phone Number": "phone with country code",
-    "Country": "Country Name"
+    "Full Name": "",
+    "Current Company": "",
+    "Job Title": "",
+    "Company Website": "",
+    "Predicted Email": "",
+    "Phone Number": "",
+    "Country": ""
 }}
 """
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
+        response = None
+        last_err = None
+        for model_name in ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"]:
+            try:
+                response = client.models.generate_content(model=model_name, contents=prompt)
+                break
+            except Exception as err:
+                last_err = err
+                if "404" not in str(err) and "NOT_FOUND" not in str(err):
+                    raise
+        if response is None and last_err:
+            raise last_err
+
         if response and response.text:
             text = response.text.strip()
             if text.startswith("```"):
                 text = re.sub(r"^```(?:json)?\s*", "", text)
                 text = re.sub(r"\s*```$", "", text)
             ai_data = json.loads(text)
-            
+
+            filled = False
             for k in requested_fields:
-                if k in ai_data and ai_data[k]:
-                    if not base_data.get(k) or base_data.get(k) == "" or "*" in str(base_data.get(k)):
+                if k in ai_data and ai_data[k] and k != "Phone Number":
+                    if not base_data.get(k) or "*" in str(base_data.get(k)):
                         base_data[k] = ai_data[k]
-                    elif k in ["Company Website", "Professional Email", "Phone Number"] and ai_data[k]:
-                        base_data[k] = ai_data[k]
-            base_data["Status"] = "Verified with Gemini AI"
+                        filled = True
+            if filled:
+                base_data["Status"] = f"{base_data.get('Status')} + Gemini suggestions (unverified)"
     except Exception as e:
-        base_data["Status"] = f"{base_data.get('Status')} (AI note: {str(e)[:25]})"
+        base_data["Status"] = f"{base_data.get('Status')} (AI error: {str(e)[:200]})"
     return base_data
 
 # -------------------------------------------------------------
@@ -868,7 +842,7 @@ st.markdown("""
                 <span class="hero-title-accent">FINDORA</span> <span class="hero-title-sub">GLOBAL INTELLIGENCE</span>
             </h1>
             <div class="hero-subtitle">
-                High-Accuracy B2B Lead Enrichment Engine &bull; Verified Contact & Profile Extraction
+                B2B Lead Enrichment Engine &bull; Profile Extraction &amp; Predicted Contact Details
             </div>
             <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
                 <span class="badge-chip badge-green">● Active Session Engine</span>
@@ -1061,7 +1035,7 @@ all_available_fields = [
     "Current Company",
     "Job Title",
     "Company Website",
-    "Professional Email",
+    "Predicted Email",
     "Phone Number",
     "Country"
 ]
@@ -1077,7 +1051,7 @@ elif "Email Enrichment" in enrichment_mode:
         "Current Company",
         "Job Title",
         "Company Website",
-        "Professional Email"
+        "Predicted Email"
     ]
 
 elif "Phone Enrichment" in enrichment_mode:
