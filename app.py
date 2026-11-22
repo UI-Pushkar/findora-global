@@ -767,8 +767,41 @@ def extract_profile_with_session(session: requests.Session, url: str) -> dict:
 
     return data
 
+def pick_gemini_models(client) -> list:
+    """Ask the API which Flash models this key can use, newest first. Falls back to a static list."""
+    found = []
+    try:
+        for m in client.models.list():
+            n = str(getattr(m, "name", "")).replace("models/", "")
+            actions = getattr(m, "supported_actions", None) or []
+            if "flash" not in n or "generateContent" not in actions:
+                continue
+            if any(x in n for x in ["image", "tts", "live", "audio", "embedding", "robotics", "computer", "native"]):
+                continue
+            found.append(n)
+    except Exception:
+        pass
+
+    def sort_key(n):
+        nums = re.findall(r"\d+(?:\.\d+)?", n)
+        ver = float(nums[0]) if nums else 0.0
+        return (-ver, 1 if "lite" in n else 0, n)
+
+    found = sorted(set(found), key=sort_key)[:4]
+    override = os.getenv("GEMINI_MODEL", "").strip()
+    ordered = ([override] if override else []) + found + ["gemini-flash-latest"]
+    seen, result = set(), []
+    for n in ordered:
+        if n and n not in seen:
+            seen.add(n)
+            result.append(n)
+    return result
+
 def enrich_with_gemini(api_key: str, profile_url: str, base_data: dict, requested_fields: list) -> dict:
     """Ask Gemini to fill EMPTY fields only. Output is a suggestion, not verified data."""
+    if not base_data.get("Full Name") and not base_data.get("Current Company"):
+        base_data["Status"] = f"{base_data.get('Status')} (Gemini skipped: no profile data to work with)"
+        return base_data
     try:
         from google import genai
         client = genai.Client(api_key=api_key)
@@ -801,7 +834,7 @@ Return ONLY valid JSON:
 """
         response = None
         last_err = None
-        for model_name in ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"]:
+        for model_name in pick_gemini_models(client):
             try:
                 response = client.models.generate_content(model=model_name, contents=prompt)
                 break
