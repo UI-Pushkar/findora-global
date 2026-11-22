@@ -30,7 +30,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Hide Print, Record screen, Made with Streamlit inside the menu
-components.html("""
+_MENU_CLEANER_HTML = """
 <script>
 const doc = window.parent.document;
 const HIDE = ["print", "record screen", "made with streamlit"];
@@ -57,7 +57,11 @@ function clean() {
 new MutationObserver(clean).observe(doc.body, {childList: true, subtree: true});
 clean();
 </script>
-""", height=0)
+"""
+try:
+    st.iframe(_MENU_CLEANER_HTML, height=1)
+except Exception:
+    components.html(_MENU_CLEANER_HTML, height=0)
 
 # -------------------------------------------------------------
 # Modern Theme-Adaptive Design System (Light, Dark, System)
@@ -911,7 +915,7 @@ with st.sidebar:
     
 
     st.markdown("---")
-    if st.button("⏻ Reset / Start New Project", use_container_width=True, help="Clear all stored inputs and results"):
+    if st.button("⏻ Reset / Start New Project", width="stretch", help="Clear all stored inputs and results"):
         for key in ["enriched_results_df", "current_file_id", "uploaded_raw_df", "lead_cache"]:
             if key in st.session_state:
                 del st.session_state[key]
@@ -1006,7 +1010,7 @@ with tab1:
             input_urls = raw_series
             
             with st.expander(f"Spreadsheet Preview: First 5 of {len(df)} rows", expanded=False):
-                st.dataframe(df.head(5), use_container_width=True)
+                st.dataframe(df.head(5), width="stretch")
                 
         except Exception as e:
             st.error(f"Error reading file: {e}")
@@ -1230,7 +1234,7 @@ st.write("")
 if duplicates_count > 0:
     with st.expander(f"✂️ {duplicates_count} Duplicate Row{'s' if duplicates_count > 1 else ''} Filtered Out (Click to inspect)", expanded=False):
         dup_df = pd.DataFrame(duplicate_pairs, columns=["Duplicate Row Link in Input", "Canonical Profile Kept"])
-        st.dataframe(dup_df, use_container_width=True)
+        st.dataframe(dup_df, width="stretch")
 
 if invalid_urls:
     with st.expander(f"⚠️ {len(invalid_urls)} invalid entries ignored (Click to review)", expanded=False):
@@ -1247,7 +1251,7 @@ st.write("")
 if st.button(
     "Start Enrichment  ➤",
     type="primary",
-    use_container_width=True
+    width="stretch"
 ):
 
     if not unique_valid:
@@ -1606,7 +1610,7 @@ if "enriched_results_df" in st.session_state and st.session_state["enriched_resu
         st.info(f"✂️ **Duplicate Management:** `{dup_removed}` duplicate profile row{'s were' if dup_removed > 1 else ' was'} automatically removed from the dataset. All {len(export_df)} records in the export are 100% unique.")
 
     # Complete, non-truncated dataframe display
-    st.dataframe(export_df, use_container_width=True, height=500)
+    st.dataframe(export_df, width="stretch", height=500)
     
     st.markdown("### 📥 Export Your Enriched Data")
     if dup_removed > 0:
@@ -1651,7 +1655,7 @@ if "enriched_results_df" in st.session_state and st.session_state["enriched_resu
             data=excel_data,
             file_name=excel_file_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            width="stretch"
         )
 
     with d2:
@@ -1660,7 +1664,7 @@ if "enriched_results_df" in st.session_state and st.session_state["enriched_resu
             data=csv_data,
             file_name=csv_file_name,
             mime="text/csv",
-            use_container_width=True
+            width="stretch"
         )
 
 
